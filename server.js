@@ -53,7 +53,7 @@ app.post('/api/pay', async (req, res) => {
         tx_ref,
         amount,
         currency: 'GHS',
-        redirect_url: 'http://localhost:52698/payment-callback.html',
+        redirect_url: 'https://your-frontend-url.netlify.app/payment-success.html', // <-- UPDATE THIS!
         customer: { email, name },
         customizations: {
           title: 'MyApp Wallet Payment',
