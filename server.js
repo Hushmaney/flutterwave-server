@@ -14,6 +14,11 @@ app.use(cors());
 app.use(bodyParser.json());
 app.use(express.static('public'));
 
+// ✅ Root route to confirm server is working
+app.get('/', (req, res) => {
+  res.json({ message: 'Flutterwave server is running' });
+});
+
 const PORT = process.env.PORT || 3000;
 
 // ✅ Connect to MongoDB
@@ -26,7 +31,7 @@ mongoose.connect(process.env.MONGODB_URI, {
   console.error('❌ MongoDB connection error:', err);
 });
 
-// ✅ Create a Mongoose schema/model
+// ✅ Mongoose Schema
 const transactionSchema = new mongoose.Schema({
   email: String,
   amount: Number,
@@ -37,7 +42,7 @@ const transactionSchema = new mongoose.Schema({
 
 const Transaction = mongoose.model('Transaction', transactionSchema);
 
-// ✅ Email Setup
+// ✅ Nodemailer setup
 const transporter = nodemailer.createTransport({
   service: 'gmail',
   auth: {
@@ -46,7 +51,7 @@ const transporter = nodemailer.createTransport({
   }
 });
 
-// ✅ Flutterwave webhook endpoint
+// ✅ Webhook to receive payment data
 app.post('/webhook', async (req, res) => {
   const { status, amount, customer, tx_ref } = req.body;
   const email = customer.email;
@@ -62,7 +67,7 @@ app.post('/webhook', async (req, res) => {
     await newTransaction.save();
     console.log('✅ Transaction saved to MongoDB');
 
-    // ✅ Send email
+    // ✅ Send email notification
     const mailOptions = {
       from: process.env.EMAIL_USER,
       to: email,
@@ -75,12 +80,12 @@ app.post('/webhook', async (req, res) => {
 
     res.sendStatus(200);
   } catch (error) {
-    console.error('❌ Error:', error);
+    console.error('❌ Error saving transaction or sending email:', error);
     res.sendStatus(500);
   }
 });
 
-// ✅ Get all transactions
+// ✅ Endpoint to get all transactions
 app.get('/transactions', async (req, res) => {
   try {
     const transactions = await Transaction.find().sort({ date: -1 });
@@ -90,6 +95,7 @@ app.get('/transactions', async (req, res) => {
   }
 });
 
+// ✅ Start server
 app.listen(PORT, () => {
   console.log(`🚀 Server running on http://localhost:${PORT}`);
 });
