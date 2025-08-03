@@ -137,6 +137,11 @@ app.get('/api/transactions', (req, res) => {
   res.json(records);
 });
 
+// ✅ Root route to fix "Cannot GET /"
+app.get('/', (req, res) => {
+  res.send('✅ Flutterwave server is live!');
+});
+
 // Start the server
 app.listen(PORT, () => {
   console.log(`🚀 Server running on http://localhost:${PORT}`);
