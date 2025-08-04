@@ -1,11 +1,10 @@
 const express = require('express');
-const fs = require('fs');
-const path = require('path');
 const cors = require('cors');
 const bodyParser = require('body-parser');
 const dotenv = require('dotenv');
 const mongoose = require('mongoose');
 const nodemailer = require('nodemailer');
+const axios = require('axios');
 
 dotenv.config();
 
@@ -16,17 +15,12 @@ app.use(express.static('public'));
 
 const PORT = process.env.PORT || 3000;
 
-// ✅ MongoDB connection
-mongoose.connect(process.env.MONGODB_URI, {
-  useNewUrlParser: true,
-  useUnifiedTopology: true
-}).then(() => {
-  console.log('✅ Connected to MongoDB');
-}).catch(err => {
-  console.error('❌ MongoDB connection error:', err);
-});
+// ✅ Connect to MongoDB
+mongoose.connect(process.env.MONGODB_URI)
+  .then(() => console.log('✅ Connected to MongoDB'))
+  .catch(err => console.error('❌ MongoDB connection error:', err));
 
-// ✅ Mongoose Schema
+// ✅ Mongoose Transaction schema
 const transactionSchema = new mongoose.Schema({
   email: String,
   amount: Number,
@@ -50,7 +44,46 @@ app.get('/', (req, res) => {
   res.json({ message: 'Flutterwave server is running' });
 });
 
-// ✅ Webhook to receive payment data
+// ✅ Flutterwave payment initialization
+app.post('/api/pay', async (req, res) => {
+  const { name, email, amount } = req.body;
+
+  const payload = {
+    tx_ref: `tx-${Date.now()}`,
+    amount,
+    currency: 'GHS',
+    redirect_url: 'https://tiny-tarsier-6b11ac.netlify.app/transactions.html',
+    customer: { email, name },
+    customizations: {
+      title: "Wallet Top-up",
+      description: "Payment to top up your wallet"
+    }
+  };
+
+  try {
+    const response = await axios.post(
+      'https://api.flutterwave.com/v3/payments',
+      payload,
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.FLW_SECRET_KEY}`,
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+
+    if (response.data.status === 'success') {
+      res.json({ paymentLink: response.data.data.link });
+    } else {
+      res.status(500).json({ message: 'Payment initiation failed' });
+    }
+  } catch (error) {
+    console.error('❌ Payment init error:', error.response?.data || error.message);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+});
+
+// ✅ Webhook: Flutterwave callback handler
 app.post('/webhook', async (req, res) => {
   const { status, amount, customer, tx_ref } = req.body;
   const email = customer.email;
@@ -64,7 +97,7 @@ app.post('/webhook', async (req, res) => {
 
   try {
     await newTransaction.save();
-    console.log('✅ Transaction saved to MongoDB');
+    console.log('✅ Transaction saved to DB');
 
     const mailOptions = {
       from: process.env.EMAIL_USER,
@@ -77,18 +110,18 @@ app.post('/webhook', async (req, res) => {
     console.log('✅ Email sent to', email);
 
     res.sendStatus(200);
-  } catch (error) {
-    console.error('❌ Error saving transaction or sending email:', error);
+  } catch (err) {
+    console.error('❌ Webhook error:', err);
     res.sendStatus(500);
   }
 });
 
-// ✅ Endpoint to get all transactions
+// ✅ Get all transactions
 app.get('/transactions', async (req, res) => {
   try {
     const transactions = await Transaction.find().sort({ date: -1 });
     res.json(transactions);
-  } catch (error) {
+  } catch {
     res.status(500).json({ message: 'Error fetching transactions' });
   }
 });
