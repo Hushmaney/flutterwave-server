@@ -15,12 +15,12 @@ app.use(express.static('public'));
 
 const PORT = process.env.PORT || 3000;
 
-// ✅ Connect to MongoDB
+// ✅ MongoDB connection
 mongoose.connect(process.env.MONGODB_URI)
   .then(() => console.log('✅ Connected to MongoDB'))
   .catch(err => console.error('❌ MongoDB connection error:', err));
 
-// ✅ Mongoose Transaction schema
+// ✅ Mongoose schema
 const transactionSchema = new mongoose.Schema({
   email: String,
   amount: Number,
@@ -30,7 +30,7 @@ const transactionSchema = new mongoose.Schema({
 });
 const Transaction = mongoose.model('Transaction', transactionSchema);
 
-// ✅ Nodemailer setup
+// ✅ Email setup
 const transporter = nodemailer.createTransport({
   service: 'gmail',
   auth: {
@@ -39,12 +39,12 @@ const transporter = nodemailer.createTransport({
   }
 });
 
-// ✅ Root route
+// ✅ Root
 app.get('/', (req, res) => {
   res.json({ message: 'Flutterwave server is running' });
 });
 
-// ✅ Flutterwave payment initialization
+// ✅ Payment initialization
 app.post('/api/pay', async (req, res) => {
   const { name, email, amount } = req.body;
 
@@ -52,7 +52,7 @@ app.post('/api/pay', async (req, res) => {
     tx_ref: `tx-${Date.now()}`,
     amount,
     currency: 'GHS',
-    redirect_url: 'https://tiny-tarsier-6b11ac.netlify.app/transactions.html',
+    redirect_url: 'https://flutterwave-server-i4ae.onrender.com/verify-payment', // ✅ Updated redirect
     customer: { email, name },
     customizations: {
       title: "Wallet Top-up",
@@ -83,47 +83,52 @@ app.post('/api/pay', async (req, res) => {
   }
 });
 
-// ✅ Webhook: Flutterwave callback handler (FIXED)
-app.post('/webhook', async (req, res) => {
-  const payload = req.body.data;
-
-  if (!payload) {
-    console.log('❌ Invalid webhook structure');
-    return res.sendStatus(400);
-  }
-
-  const { status, amount, customer, tx_ref } = payload;
-  const email = customer.email;
-
-  const newTransaction = new Transaction({
-    email,
-    amount,
-    status,
-    reference: tx_ref
-  });
+// ✅ Verify transaction (replacement for webhook)
+app.get('/verify-payment', async (req, res) => {
+  const { transaction_id } = req.query;
 
   try {
-    await newTransaction.save();
-    console.log('✅ Transaction saved to DB');
+    const verifyResponse = await axios.get(
+      `https://api.flutterwave.com/v3/transactions/${transaction_id}/verify`,
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.FLW_SECRET_KEY}`
+        }
+      }
+    );
 
+    const data = verifyResponse.data.data;
+
+    const newTransaction = new Transaction({
+      email: data.customer.email,
+      amount: data.amount,
+      status: data.status,
+      reference: data.tx_ref
+    });
+
+    await newTransaction.save();
+    console.log('✅ Transaction verified & saved');
+
+    // Email
     const mailOptions = {
       from: process.env.EMAIL_USER,
-      to: email,
+      to: data.customer.email,
       subject: 'Payment Successful',
-      text: `Your payment of ₦${amount} was successful. Reference: ${tx_ref}`
+      text: `Your payment of ₦${data.amount} was successful. Reference: ${data.tx_ref}`
     };
 
     await transporter.sendMail(mailOptions);
-    console.log('✅ Email sent to', email);
+    console.log('✅ Email sent to', data.customer.email);
 
-    res.sendStatus(200);
+    // Redirect to frontend
+    res.redirect('https://tiny-tarsier-6b11ac.netlify.app/transactions.html');
   } catch (err) {
-    console.error('❌ Webhook error:', err);
-    res.sendStatus(500);
+    console.error('❌ Error verifying transaction:', err.response?.data || err.message);
+    res.status(500).send('Verification failed');
   }
 });
 
-// ✅ Get all transactions
+// ✅ Transaction history
 app.get('/transactions', async (req, res) => {
   try {
     const transactions = await Transaction.find().sort({ date: -1 });
@@ -133,7 +138,7 @@ app.get('/transactions', async (req, res) => {
   }
 });
 
-// ✅ Health check endpoint
+// ✅ Health check
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', message: 'Backend is live!' });
 });
