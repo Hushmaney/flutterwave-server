@@ -1,6 +1,5 @@
 const express = require('express');
 const bodyParser = require('body-parser');
-const crypto = require('crypto');
 const mongoose = require('mongoose');
 const nodemailer = require('nodemailer');
 require('dotenv').config();
@@ -46,11 +45,7 @@ app.post('/api/webhook', express.raw({ type: 'application/json' }), async (req, 
   const secretHash = process.env.FLW_SECRET_HASH;
   const receivedHash = req.headers['verif-hash'];
 
-  const generatedHash = crypto.createHmac('sha256', secretHash)
-    .update(req.body)
-    .digest('hex');
-
-  if (receivedHash !== generatedHash) {
+  if (!receivedHash || receivedHash !== secretHash) {
     console.log('Invalid signature');
     return res.status(401).send('Invalid signature');
   }
