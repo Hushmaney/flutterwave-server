@@ -83,9 +83,16 @@ app.post('/api/pay', async (req, res) => {
   }
 });
 
-// ✅ Webhook: Flutterwave callback handler
+// ✅ Webhook: Flutterwave callback handler (FIXED)
 app.post('/webhook', async (req, res) => {
-  const { status, amount, customer, tx_ref } = req.body;
+  const payload = req.body.data;
+
+  if (!payload) {
+    console.log('❌ Invalid webhook structure');
+    return res.sendStatus(400);
+  }
+
+  const { status, amount, customer, tx_ref } = payload;
   const email = customer.email;
 
   const newTransaction = new Transaction({
