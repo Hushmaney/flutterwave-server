@@ -1,149 +1,115 @@
+require('dotenv').config();
 const express = require('express');
-const cors = require('cors');
-const bodyParser = require('body-parser');
-const dotenv = require('dotenv');
 const mongoose = require('mongoose');
-const nodemailer = require('nodemailer');
+const cors = require('cors');
 const axios = require('axios');
-
-dotenv.config();
+const crypto = require('crypto');
 
 const app = express();
 app.use(cors());
-app.use(bodyParser.json());
-app.use(express.static('public'));
+app.use(express.json());
 
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 10000;
+const MONGO_URI = process.env.MONGO_URI;
+const FLW_SECRET_KEY = process.env.FLW_SECRET_KEY;
+const HASH_SECRET = process.env.HASH_SECRET || 'your-36-character-secret-hash';
 
-// ✅ MongoDB connection
-mongoose.connect(process.env.MONGODB_URI)
-  .then(() => console.log('✅ Connected to MongoDB'))
-  .catch(err => console.error('❌ MongoDB connection error:', err));
-
-// ✅ Mongoose schema
+// MongoDB Schema
 const transactionSchema = new mongoose.Schema({
+  name: String,
   email: String,
   amount: Number,
-  status: String,
   reference: String,
-  date: { type: Date, default: Date.now }
+  status: String,
+  date: { type: Date, default: Date.now },
 });
+
 const Transaction = mongoose.model('Transaction', transactionSchema);
 
-// ✅ Email setup
-const transporter = nodemailer.createTransport({
-  service: 'gmail',
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS
-  }
-});
+// Connect to MongoDB
+mongoose
+  .connect(MONGO_URI)
+  .then(() => console.log('✅ Connected to MongoDB'))
+  .catch((err) => console.error('❌ MongoDB connection error:', err));
 
-// ✅ Root
-app.get('/', (req, res) => {
-  res.json({ message: 'Flutterwave server is running' });
-});
-
-// ✅ Payment initialization
+// Create Payment Route
 app.post('/api/pay', async (req, res) => {
   const { name, email, amount } = req.body;
 
-  const payload = {
-    tx_ref: `tx-${Date.now()}`,
-    amount,
-    currency: 'GHS',
-    redirect_url: 'https://flutterwave-server-i4ae.onrender.com/verify-payment', // ✅ Updated redirect
-    customer: { email, name },
-    customizations: {
-      title: "Wallet Top-up",
-      description: "Payment to top up your wallet"
-    }
-  };
-
   try {
-    const response = await axios.post(
-      'https://api.flutterwave.com/v3/payments',
-      payload,
-      {
-        headers: {
-          Authorization: `Bearer ${process.env.FLW_SECRET_KEY}`,
-          'Content-Type': 'application/json'
-        }
-      }
-    );
-
-    if (response.data.status === 'success') {
-      res.json({ paymentLink: response.data.data.link });
-    } else {
-      res.status(500).json({ message: 'Payment initiation failed' });
-    }
-  } catch (error) {
-    console.error('❌ Payment init error:', error.response?.data || error.message);
-    res.status(500).json({ message: 'Internal server error' });
-  }
-});
-
-// ✅ Verify transaction (replacement for webhook)
-app.get('/verify-payment', async (req, res) => {
-  const { transaction_id } = req.query;
-
-  try {
-    const verifyResponse = await axios.get(
-      `https://api.flutterwave.com/v3/transactions/${transaction_id}/verify`,
-      {
-        headers: {
-          Authorization: `Bearer ${process.env.FLW_SECRET_KEY}`
-        }
-      }
-    );
-
-    const data = verifyResponse.data.data;
-
-    const newTransaction = new Transaction({
-      email: data.customer.email,
-      amount: data.amount,
-      status: data.status,
-      reference: data.tx_ref
-    });
-
-    await newTransaction.save();
-    console.log('✅ Transaction verified & saved');
-
-    // Email
-    const mailOptions = {
-      from: process.env.EMAIL_USER,
-      to: data.customer.email,
-      subject: 'Payment Successful',
-      text: `Your payment of ₦${data.amount} was successful. Reference: ${data.tx_ref}`
+    const tx_ref = `FLW-${Date.now()}`;
+    const paymentData = {
+      tx_ref,
+      amount,
+      currency: 'GHS',
+      redirect_url: 'https://super-seahorse-022048.netlify.app/transactions.html',
+      payment_options: 'mobilemoneyghana',
+      customer: { email, name },
+      customizations: {
+        title: 'Top Up Wallet',
+        description: 'Wallet funding',
+      },
     };
 
-    await transporter.sendMail(mailOptions);
-    console.log('✅ Email sent to', data.customer.email);
+    const response = await axios.post('https://api.flutterwave.com/v3/payments', paymentData, {
+      headers: {
+        Authorization: `Bearer ${FLW_SECRET_KEY}`,
+        'Content-Type': 'application/json',
+      },
+    });
 
-    // Redirect to frontend
-    res.redirect('https://tiny-tarsier-6b11ac.netlify.app/transactions.html');
-  } catch (err) {
-    console.error('❌ Error verifying transaction:', err.response?.data || err.message);
-    res.status(500).send('Verification failed');
+    if (response.data && response.data.data && response.data.data.link) {
+      res.json({ paymentLink: response.data.data.link });
+    } else {
+      res.status(400).json({ error: 'Unable to initiate payment' });
+    }
+  } catch (error) {
+    console.error('Payment error:', error);
+    res.status(500).json({ error: 'Internal Server Error' });
   }
 });
 
-// ✅ Transaction history
+// ✅ Webhook Route
+app.post('/webhook', async (req, res) => {
+  const hash = crypto
+    .createHmac('sha256', HASH_SECRET)
+    .update(JSON.stringify(req.body))
+    .digest('hex');
+
+  if (hash !== req.headers['verif-hash']) {
+    return res.status(401).send('Invalid hash');
+  }
+
+  const payload = req.body;
+
+  if (payload.event === 'charge.completed' && payload.data.status === 'successful') {
+    const tx = new Transaction({
+      name: payload.data.customer.name,
+      email: payload.data.customer.email,
+      amount: payload.data.amount,
+      reference: payload.data.tx_ref,
+      status: payload.data.status,
+    });
+
+    await tx.save();
+    console.log('✅ Transaction saved via webhook');
+  }
+
+  res.send('OK');
+});
+
+// Get All Transactions
 app.get('/transactions', async (req, res) => {
   try {
     const transactions = await Transaction.find().sort({ date: -1 });
     res.json(transactions);
-  } catch {
-    res.status(500).json({ message: 'Error fetching transactions' });
+  } catch (error) {
+    console.error('Fetch error:', error);
+    res.status(500).json({ error: 'Failed to fetch transactions' });
   }
 });
 
-// ✅ Health check
-app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', message: 'Backend is live!' });
-});
-
-// ✅ Start server
+// Start Server
 app.listen(PORT, () => {
   console.log(`🚀 Server running on http://localhost:${PORT}`);
 });
