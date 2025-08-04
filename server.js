@@ -14,14 +14,9 @@ app.use(cors());
 app.use(bodyParser.json());
 app.use(express.static('public'));
 
-// ✅ Root route to confirm server is working
-app.get('/', (req, res) => {
-  res.json({ message: 'Flutterwave server is running' });
-});
-
 const PORT = process.env.PORT || 3000;
 
-// ✅ Connect to MongoDB
+// ✅ MongoDB connection
 mongoose.connect(process.env.MONGODB_URI, {
   useNewUrlParser: true,
   useUnifiedTopology: true
@@ -39,7 +34,6 @@ const transactionSchema = new mongoose.Schema({
   reference: String,
   date: { type: Date, default: Date.now }
 });
-
 const Transaction = mongoose.model('Transaction', transactionSchema);
 
 // ✅ Nodemailer setup
@@ -49,6 +43,11 @@ const transporter = nodemailer.createTransport({
     user: process.env.EMAIL_USER,
     pass: process.env.EMAIL_PASS
   }
+});
+
+// ✅ Root route
+app.get('/', (req, res) => {
+  res.json({ message: 'Flutterwave server is running' });
 });
 
 // ✅ Webhook to receive payment data
@@ -67,7 +66,6 @@ app.post('/webhook', async (req, res) => {
     await newTransaction.save();
     console.log('✅ Transaction saved to MongoDB');
 
-    // ✅ Send email notification
     const mailOptions = {
       from: process.env.EMAIL_USER,
       to: email,
@@ -93,6 +91,11 @@ app.get('/transactions', async (req, res) => {
   } catch (error) {
     res.status(500).json({ message: 'Error fetching transactions' });
   }
+});
+
+// ✅ Health check endpoint
+app.get('/api/health', (req, res) => {
+  res.json({ status: 'ok', message: 'Backend is live!' });
 });
 
 // ✅ Start server
