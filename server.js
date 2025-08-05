@@ -1,18 +1,25 @@
 const express = require('express');
-const bodyParser = require('body-parser');
 const mongoose = require('mongoose');
-const nodemailer = require('nodemailer');
-require('dotenv').config();
+const dotenv = require('dotenv');
+const crypto = require('crypto');
+const cors = require('cors');
+
+dotenv.config();
 
 const app = express();
 const port = process.env.PORT || 10000;
 
 // MongoDB connection
-mongoose.connect(process.env.MONGO_URI, {
-  useNewUrlParser: true,
-  useUnifiedTopology: true
-}).then(() => console.log('MongoDB connected'))
-  .catch(err => console.error('MongoDB error:', err));
+mongoose.connect(process.env.MONGODB_URI, {
+})
+  .then(() => console.log('MongoDB connected'))
+  .catch(err => console.error('MongoDB connection error:', err));
+
+// CORS middleware
+app.use(cors());
+
+// Body parser for normal JSON requests
+app.use(express.json());
 
 // Define Transaction schema
 const transactionSchema = new mongoose.Schema({
@@ -31,98 +38,53 @@ const transactionSchema = new mongoose.Schema({
 
 const Transaction = mongoose.model('Transaction', transactionSchema);
 
-// Nodemailer setup
-const transporter = nodemailer.createTransport({
-  service: 'gmail',
-  auth: {
-    user: process.env.EMAIL_SENDER,
-    pass: process.env.EMAIL_PASSWORD
-  }
-});
-
-// Parse raw body for webhook
+// Webhook endpoint (use express.raw for signature verification)
 app.post('/api/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
   const secretHash = process.env.FLW_SECRET_HASH;
   const receivedHash = req.headers['verif-hash'];
 
-  if (!receivedHash || receivedHash !== secretHash) {
+  const rawBody = req.body.toString(); // convert buffer to string
+
+  const generatedHash = crypto.createHmac('sha256', secretHash)
+    .update(rawBody)
+    .digest('hex');
+
+  if (receivedHash !== generatedHash) {
     console.log('Invalid signature');
     return res.status(401).send('Invalid signature');
   }
 
-  const payload = JSON.parse(req.body);
+  const payload = JSON.parse(rawBody);
 
   if (payload.event === 'charge.completed' && payload.data.status === 'successful') {
-    const data = payload.data;
+    const { tx_ref, amount, customer, status } = payload.data;
 
-    const transaction = new Transaction({
-      tx_ref: data.tx_ref,
-      amount: data.amount,
-      status: data.status,
-      customer: data.customer
-    });
+    try {
+      const newTransaction = new Transaction({
+        tx_ref,
+        amount,
+        status,
+        customer
+      });
 
-    await transaction.save();
-
-    const mailOptions = {
-      from: process.env.EMAIL_SENDER,
-      to: data.customer.email,
-      subject: 'Payment Successful',
-      text: `Hi ${data.customer.name}, your payment of NGN ${data.amount} was successful.`
-    };
-
-    transporter.sendMail(mailOptions, (err, info) => {
-      if (err) {
-        console.error('Email error:', err);
-      } else {
-        console.log('Email sent:', info.response);
-      }
-    });
-
-    console.log('Transaction saved and email sent');
+      await newTransaction.save();
+      console.log('Transaction saved:', tx_ref);
+    } catch (error) {
+      console.error('Error saving transaction:', error);
+    }
   }
 
-  res.status(200).send('Webhook received');
+  res.sendStatus(200);
 });
 
-// Payment endpoint (optional for testing)
-app.get('/api/payment', async (req, res) => {
-  const axios = require('axios');
-
-  const payload = {
-    tx_ref: `FLW-TEST-${Date.now()}`,
-    amount: 100,
-    currency: 'NGN',
-    redirect_url: 'https://your-frontend.com/payment-success',
-    payment_options: 'card',
-    customer: {
-      email: 'johndoe@example.com',
-      name: 'John Doe'
-    },
-    customizations: {
-      title: 'Test Payment',
-      description: 'Testing Flutterwave Integration'
-    }
-  };
-
+// Endpoint to get transaction history
+app.get('/api/transactions', async (req, res) => {
   try {
-    const response = await axios.post('https://api.flutterwave.com/v3/payments', payload, {
-      headers: {
-        Authorization: `Bearer ${process.env.FLW_SECRET_KEY}`,
-        'Content-Type': 'application/json'
-      }
-    });
-
-    res.status(200).json({
-      status: 'success',
-      message: 'Hosted Link',
-      data: {
-        link: response.data.data.link
-      }
-    });
-  } catch (err) {
-    console.error('Payment error:', err);
-    res.status(500).send('Payment initialization failed');
+    const transactions = await Transaction.find().sort({ createdAt: -1 });
+    res.json(transactions);
+  } catch (error) {
+    console.error('Error fetching transactions:', error);
+    res.status(500).json({ message: 'Server error' });
   }
 });
 
