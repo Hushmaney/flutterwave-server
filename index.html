@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Buy Data Plan</title>
+</head>
+<body>
+  <h2>Buy Data Plan</h2>
+  <form id="paymentForm">
+    <label>Name: <input type="text" id="name" required /></label><br/><br/>
+    <label>Email: <input type="email" id="email" required /></label><br/><br/>
+    <label>Amount (GHS): <input type="number" id="amount" required /></label><br/><br/>
+    <button type="submit">Pay Now</button>
+  </form>
+
+  <script>
+    const form = document.getElementById('paymentForm');
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const name = document.getElementById('name').value;
+      const email = document.getElementById('email').value;
+      const amount = document.getElementById('amount').value;
+
+      const res = await fetch('/api/pay', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, email, amount })
+      });
+
+      const data = await res.json();
+      if (data.link) {
+        window.location.href = data.link;
+      } else {
+        alert('Error creating payment');
+      }
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Payment Callback</title>
+</head>
+<body>
+  <h2>Processing Payment...</h2>
+  <div id="result">Please wait...</div>
+
+  <script>
+    async function verifyPayment() {
+      const urlParams = new URLSearchParams(window.location.search);
+      const tx_ref = urlParams.get('tx_ref');
+
+      if (!tx_ref) {
+        document.getElementById('result').innerText = 'Missing transaction reference.';
+        return;
+      }
+
+      try {
+        const res = await fetch(`/api/verify?tx_ref=${tx_ref}`);
+        const data = await res.json();
+
+        if (res.ok) {
+          document.getElementById('result').innerHTML = `
+            ✅ <strong>Payment Verified!</strong><br/>
+            Transaction ID: ${data.transaction.id}<br/>
+            Amount: ${data.transaction.amount} ${data.transaction.currency}<br/>
+            Status: ${data.transaction.status}<br/>
+            Email: ${data.transaction.customer.email}
+          `;
+        } else {
+          document.getElementById('result').innerText = `❌ ${data.message}`;
+        }
+      } catch (error) {
+        document.getElementById('result').innerText = 'Error verifying payment.';
+        console.error(error);
+      }
+    }
+
+    verifyPayment();
+  </script>
+</body>
+</html>
